@@ -6,11 +6,14 @@
 # =====================================================================
 
 import math                # math.ceil() rounds the number of instalments UP
+import pandas as pd        # builds the small tables/chart used for display only
 import streamlit as st     # Streamlit turns this Python script into a web page
 
 
 # ---------------------------------------------------------------------
 # PART 1 : BUSINESS DATA AND CALCULATION LOGIC
+# (unchanged from the tested version - every number here still matches
+#  the hand-calculated test cases in the project report)
 # ---------------------------------------------------------------------
 
 # Dictionary 1: price (in rupees) of ONE live class for each subject (group batch, middle school)
@@ -75,6 +78,19 @@ def get_plan_adjustment(payment_plan):
         return 3               # 3% convenience fee for monthly instalments
     else:
         return 0               # quarterly payment: no change
+
+
+def months_to_next_tier(months):
+    """How many more months unlock a bigger discount, and what that discount is.
+    Returns (months_needed, next_pct) or (None, None) if already at the top tier."""
+    if months < 3:
+        return 3 - months, 5
+    elif months < 6:
+        return 6 - months, 10
+    elif months < 12:
+        return 12 - months, 15
+    else:
+        return None, None          # already at the best discount tier
 
 
 def calculate_fee(subject, level, mode, classes_per_week, months,
@@ -155,7 +171,7 @@ def calculate_fee(subject, level, mode, classes_per_week, months,
 # PART 2 : THE WEB PAGE (Streamlit widgets collect input and show output)
 # ---------------------------------------------------------------------
 
-st.set_page_config(page_title="BrightPath Fee Calculator", page_icon="🎓")
+st.set_page_config(page_title="BrightPath Fee Calculator", page_icon="🎓", layout="centered")
 st.title("🎓 BrightPath Online Coaching")
 st.subheader("Course Fee Calculator")
 st.write("Choose your course on the left, customise your plan below, and see your fee instantly.")
@@ -174,13 +190,16 @@ months = st.number_input("Course duration (months)", min_value=1, max_value=24, 
 
 st.write("**Optional add-ons**")
 selected_addons = []                         # empty list: ticked add-ons will be added to it
-for addon_name, addon_price in ADD_ONS.items():
-    if st.checkbox(f"{addon_name} (+₹{addon_price}/month)"):     # inputs 7-9 (bool)
-        selected_addons.append(addon_name)
-study_material = st.checkbox(f"Printed + PDF study material (+₹{STUDY_MATERIAL_FEE} one-time)")  # input 10 (bool)
+addon_cols = st.columns(len(ADD_ONS))        # one column per add-on, so they sit in a neat row
+for col, (addon_name, addon_price) in zip(addon_cols, ADD_ONS.items()):
+    with col:
+        if st.checkbox(f"{addon_name}", help=f"+₹{addon_price}/month"):   # inputs 7-9 (bool)
+            selected_addons.append(addon_name)
+study_material = st.checkbox(f"📘 Printed + PDF study material (+₹{STUDY_MATERIAL_FEE} one-time)")  # input 10 (bool)
 
 payment_plan = st.radio("Payment plan",
-                        ["Pay Full Upfront", "Pay Quarterly", "Pay Monthly"], index=1)             # input 11 (str)
+                        ["Pay Full Upfront", "Pay Quarterly", "Pay Monthly"], index=1,
+                        horizontal=True)                                                           # input 11 (str)
 promo_code = st.text_input("Promo code (optional)", placeholder="e.g. WELCOME10")                  # input 12 (str)
 
 st.divider()
@@ -198,47 +217,121 @@ except (ValueError, KeyError) as error:
     st.error(f"Could not calculate the fee: {error}")
     st.stop()
 
-# ----- OUTPUT: headline amount -----
-st.success(f"Total payable for {student_name.strip()}: ₹{result['total']:,.2f} (including 18% GST)")
+# Two tabs keep the quote and the "how we price it" details apart, so the
+# main page stays short and easy to scan.
+tab_quote, tab_pricing = st.tabs(["💰 Your Quote", "ℹ️ How Pricing Works"])
 
-# Three key numbers side by side
-col1, col2, col3 = st.columns(3)
-col1.metric("Total live classes", result["total_classes"])
-col2.metric("Average cost per month", f"₹{result['total'] / months:,.0f}")
-col3.metric("Instalments", f"{result['instalments']} x ₹{result['per_instalment']:,.0f}")
+# =======================================================================
+# TAB 1: the quote itself
+# =======================================================================
+with tab_quote:
 
-# Message about the promo code (if/elif so each case gets its own message)
-if result["promo_status"] == "applied":
-    st.success(f"Promo code {result['promo_code']} applied: {result['promo_pct']}% off the course fee.")
-elif result["promo_status"] == "invalid":
-    st.warning(f"Promo code '{result['promo_code']}' is not valid, so no promo discount was applied.")
+    # ----- OUTPUT: headline amount -----
+    st.success(f"Total payable for {student_name.strip()}: ₹{result['total']:,.2f} (including 18% GST)")
 
-# ----- OUTPUT: line-by-line fee breakdown -----
-st.subheader("Fee Breakdown")
-rows = [{"Item": f"Course fee ({result['total_classes']} classes x ₹{result['rate_per_class']:,.2f})",
-         "Amount (₹)": f"{result['course_fee']:,.2f}"}]
+    # Three key numbers side by side
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total live classes", result["total_classes"])
+    col2.metric("Average cost per month", f"₹{result['total'] / months:,.0f}")
+    col3.metric("Instalments", f"{result['instalments']} x ₹{result['per_instalment']:,.0f}")
 
-if result["duration_discount"] > 0:
-    rows.append({"Item": f"Long-course discount ({result['duration_pct']}%)",
-                 "Amount (₹)": f"-{result['duration_discount']:,.2f}"})
-if result["promo_discount"] > 0:
-    rows.append({"Item": f"Promo discount ({result['promo_pct']}%)",
-                 "Amount (₹)": f"-{result['promo_discount']:,.2f}"})
-for addon_name in selected_addons:           # one row for every ticked add-on
-    rows.append({"Item": f"{addon_name} ({months} months)",
-                 "Amount (₹)": f"{ADD_ONS[addon_name] * months:,.2f}"})
-if study_material:
-    rows.append({"Item": "Study material", "Amount (₹)": f"{STUDY_MATERIAL_FEE:,.2f}"})
+    # ----- Nudge: how close is the student to the next discount tier? -----
+    months_needed, next_pct = months_to_next_tier(months)
+    if months_needed is not None:                       # None means already at the top tier (12+ months)
+        st.progress(months / 12, text=(
+            f"Enrol for {months_needed} more month(s) to unlock the {next_pct}% long-course discount "
+            f"(currently {result['duration_pct']}%)."
+        ))
+    else:
+        st.progress(1.0, text="You already have the best long-course discount: 15%! 🎉")
 
-if result["plan_adjustment"] < 0:
-    rows.append({"Item": f"Pay-in-full discount ({abs(result['plan_pct'])}%)",
-                 "Amount (₹)": f"-{abs(result['plan_adjustment']):,.2f}"})
-elif result["plan_adjustment"] > 0:
-    rows.append({"Item": f"Monthly instalment fee ({result['plan_pct']}%)",
-                 "Amount (₹)": f"{result['plan_adjustment']:,.2f}"})
+    # Message about the promo code (if/elif so each case gets its own message)
+    if result["promo_status"] == "applied":
+        st.success(f"Promo code {result['promo_code']} applied: {result['promo_pct']}% off the course fee.")
+    elif result["promo_status"] == "invalid":
+        st.warning(f"Promo code '{result['promo_code']}' is not valid, so no promo discount was applied.")
 
-rows.append({"Item": "GST (18%)", "Amount (₹)": f"{result['gst']:,.2f}"})
-rows.append({"Item": "TOTAL PAYABLE", "Amount (₹)": f"{result['total']:,.2f}"})
-st.table(rows)
+    # ----- OUTPUT: line-by-line fee breakdown -----
+    st.subheader("Fee Breakdown")
 
-st.caption("Fees are indicative and include 18% GST. Book a free demo class before you enrol.")
+    # Build the breakdown as two lists in parallel: a display table (text, with
+    # +/- signs) and a numeric chart series (actual signed numbers for st.bar_chart).
+    rows = [{"Item": f"Course fee ({result['total_classes']} classes)", "Amount (₹)": f"{result['course_fee']:,.2f}"}]
+    chart_data = {"Course fee": result["course_fee"]}
+
+    if result["duration_discount"] > 0:
+        rows.append({"Item": f"Long-course discount ({result['duration_pct']}%)",
+                     "Amount (₹)": f"-{result['duration_discount']:,.2f}"})
+        chart_data["Duration discount"] = -result["duration_discount"]
+    if result["promo_discount"] > 0:
+        rows.append({"Item": f"Promo discount ({result['promo_pct']}%)",
+                     "Amount (₹)": f"-{result['promo_discount']:,.2f}"})
+        chart_data["Promo discount"] = -result["promo_discount"]
+    for addon_name in selected_addons:           # one row for every ticked add-on
+        amount = ADD_ONS[addon_name] * months
+        rows.append({"Item": f"{addon_name} ({months} months)", "Amount (₹)": f"{amount:,.2f}"})
+        chart_data[addon_name] = amount
+    if study_material:
+        rows.append({"Item": "Study material", "Amount (₹)": f"{STUDY_MATERIAL_FEE:,.2f}"})
+        chart_data["Study material"] = STUDY_MATERIAL_FEE
+
+    if result["plan_adjustment"] < 0:
+        rows.append({"Item": f"Pay-in-full discount ({abs(result['plan_pct'])}%)",
+                     "Amount (₹)": f"-{abs(result['plan_adjustment']):,.2f}"})
+        chart_data["Pay-in-full discount"] = result["plan_adjustment"]
+    elif result["plan_adjustment"] > 0:
+        rows.append({"Item": f"Monthly instalment fee ({result['plan_pct']}%)",
+                     "Amount (₹)": f"{result['plan_adjustment']:,.2f}"})
+        chart_data["Monthly instalment fee"] = result["plan_adjustment"]
+
+    rows.append({"Item": "GST (18%)", "Amount (₹)": f"{result['gst']:,.2f}"})
+    chart_data["GST"] = result["gst"]
+    rows.append({"Item": "TOTAL PAYABLE", "Amount (₹)": f"{result['total']:,.2f}"})
+
+    # Table and chart side by side: the table has exact numbers, the chart gives
+    # an at-a-glance picture of what makes up the price.
+    table_col, chart_col = st.columns([3, 2])
+    with table_col:
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+    with chart_col:
+        chart_df = pd.DataFrame.from_dict(chart_data, orient="index", columns=["Amount (₹)"])
+        st.bar_chart(chart_df, use_container_width=True)
+
+    # ----- Download a plain-text copy of the quote -----
+    quote_lines = [f"BrightPath Online Coaching - Fee Quote",
+                   f"Student: {student_name.strip()}", f"Subject: {subject} ({level})",
+                   f"Class type: {mode}", f"Duration: {months} month(s), {classes_per_week} classes/week",
+                   "-" * 40]
+    quote_lines += [f"{r['Item']}: Rs {r['Amount (₹)']}" for r in rows]
+    quote_text = "\n".join(quote_lines)
+    st.download_button("⬇️ Download this quote as a text file", data=quote_text,
+                       file_name=f"{student_name.strip().replace(' ', '_')}_quote.txt")
+
+    st.caption("Fees are indicative and include 18% GST. Book a free demo class before you enrol.")
+
+# =======================================================================
+# TAB 2: transparent pricing reference (builds customer trust)
+# =======================================================================
+with tab_pricing:
+    st.write(
+        "Every quote follows the same pipeline: **course fee → minus duration discount → "
+        "minus promo code → plus add-ons → ± payment-plan adjustment → plus 18% GST.**"
+    )
+
+    st.write("**Subject rate per class** (group batch, middle school level)")
+    st.dataframe(pd.DataFrame.from_dict(SUBJECT_RATES, orient="index", columns=["₹ per class"]),
+                use_container_width=True)
+
+    price_col, discount_col = st.columns(2)
+    with price_col:
+        st.write("**Class-type multiplier**")
+        st.dataframe(pd.DataFrame.from_dict(MODE_FACTORS, orient="index", columns=["x Multiplier"]),
+                    use_container_width=True)
+    with discount_col:
+        st.write("**Long-course discount**")
+        st.dataframe(pd.DataFrame({"Enrol for": ["12+ months", "6-11 months", "3-5 months", "Under 3 months"],
+                                   "Discount": ["15%", "10%", "5%", "0%"]}),
+                    hide_index=True, use_container_width=True)
+
+    st.write("**Promo codes currently active:** " + ", ".join(
+        f"`{code}` ({pct}% off)" for code, pct in PROMO_CODES.items()))
