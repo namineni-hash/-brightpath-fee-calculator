@@ -1,4 +1,3 @@
-
 # =====================================================================
 # BrightPath Online Coaching - Course Fee Calculator
 # Course  : Python Programming for Business Students (End Term Project)
