@@ -1,3 +1,4 @@
+
 # =====================================================================
 # BrightPath Online Coaching - Course Fee Calculator
 # Course  : Python Programming for Business Students (End Term Project)
@@ -5,9 +6,21 @@
 # Run with: streamlit run app.py
 # =====================================================================
 
-import math                # math.ceil() rounds the number of instalments UP
-import pandas as pd        # builds the small tables/chart used for display only
-import streamlit as st     # Streamlit turns this Python script into a web page
+import math
+import io
+from datetime import date
+from xml.sax.saxutils import escape
+
+import pandas as pd
+import streamlit as st
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+)
 
 
 # ---------------------------------------------------------------------
@@ -167,6 +180,137 @@ def calculate_fee(subject, level, mode, classes_per_week, months,
     }
 
 
+def build_quote_pdf(student_name, subject, level, mode, classes_per_week,
+                   months, selected_addons, study_material, payment_plan, result, rows):
+    """Create a polished, downloadable PDF quote in memory."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
+        topMargin=17 * mm, bottomMargin=17 * mm
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="Brand", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=21, leading=25, textColor=colors.HexColor("#173B57"),
+        alignment=TA_CENTER, spaceAfter=3
+    ))
+    styles.add(ParagraphStyle(
+        name="Tagline", parent=styles["Normal"], fontSize=9,
+        textColor=colors.HexColor("#617486"), alignment=TA_CENTER,
+        spaceAfter=14
+    ))
+    styles.add(ParagraphStyle(
+        name="Section", parent=styles["Heading2"], fontSize=12,
+        leading=15, textColor=colors.HexColor("#173B57"),
+        spaceBefore=12, spaceAfter=7
+    ))
+    styles.add(ParagraphStyle(
+        name="SmallNote", parent=styles["Normal"], fontSize=8,
+        leading=11, textColor=colors.HexColor("#617486")
+    ))
+
+    story = [
+        Paragraph("BrightPath Online Coaching", styles["Brand"]),
+        Paragraph("COURSE FEE QUOTATION", styles["Tagline"]),
+    ]
+
+    details = [
+        ["Student", escape(student_name.strip()), "Quote date", date.today().strftime("%d %b %Y")],
+        ["Subject", escape(subject), "Level", escape(level)],
+        ["Class type", escape(mode), "Duration", f"{months} month(s)"],
+        ["Weekly schedule", f"{classes_per_week} live class(es)", "Payment plan", escape(payment_plan)],
+    ]
+    detail_table = Table(details, colWidths=[27*mm, 58*mm, 27*mm, 58*mm])
+    detail_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#EEF3F7")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#EEF3F7")),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#173B57")),
+        ("TEXTCOLOR", (2, 0), (2, -1), colors.HexColor("#173B57")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTNAME", (3, 0), (3, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D9E1E8")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story += [detail_table, Paragraph("Fee breakdown", styles["Section"])]
+
+    fee_data = [["Description", "Amount (INR)"]]
+    for row in rows:
+        fee_data.append([str(row["Item"]), str(row["Amount (₹)"])])
+    fee_table = Table(fee_data, colWidths=[125*mm, 45*mm], repeatRows=1)
+    fee_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#173B57")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (1, 1), (1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+         [colors.white, colors.HexColor("#F5F8FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D9E1E8")),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+    ]))
+    story += [fee_table, Spacer(1, 10)]
+
+    total_box = Table(
+        [["TOTAL PAYABLE (including 18% GST)", f"INR {result['total']:,.2f}"]],
+        colWidths=[112*mm, 58*mm]
+    )
+    total_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#E8F1F7")),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#173B57")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 11),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor("#A9BDCC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.append(total_box)
+
+    payment_text = (
+        f"Payment schedule: {result['instalments']} instalment(s) of "
+        f"INR {result['per_instalment']:,.2f} each."
+    )
+    story += [
+        Paragraph(payment_text, styles["Section"]),
+        Paragraph(
+            f"Total live classes: {result['total_classes']} &nbsp; | &nbsp; "
+            f"Average monthly cost: INR {result['total'] / months:,.2f}",
+            styles["Normal"]
+        ),
+        Spacer(1, 14),
+        Paragraph(
+            "Terms and notes: This quotation is indicative and includes GST at 18%. "
+            "The estimate is based on four teaching weeks per month. Any changes to "
+            "the selected course, schedule, add-ons or applicable taxes may change "
+            "the final fee. Please contact BrightPath Online Coaching to confirm "
+            "enrolment and payment details.",
+            styles["SmallNote"]
+        ),
+        Spacer(1, 5),
+        Paragraph("Thank you for considering BrightPath Online Coaching!", styles["SmallNote"]),
+    ]
+
+    def add_page_number(canvas, document):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor("#8292A0"))
+        canvas.drawString(18 * mm, 10 * mm, "BrightPath Online Coaching")
+        canvas.drawRightString(A4[0] - 18 * mm, 10 * mm, f"Page {document.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 # ---------------------------------------------------------------------
 # PART 2 : THE WEB PAGE (Streamlit widgets collect input and show output)
 # ---------------------------------------------------------------------
@@ -178,7 +322,7 @@ st.write("Choose your course on the left, customise your plan below, and see you
 
 # ----- INPUTS in the sidebar: who is studying and what they want to learn -----
 st.sidebar.header("Student & Course")
-student_name = st.sidebar.text_input("Student Name", value="Aarav Sharma")                        # input 1 (str)
+student_name = st.sidebar.text_input("Student Name", placeholder="Enter student name")                        # input 1 (str)
 subject = st.sidebar.selectbox("Subject", list(SUBJECT_RATES.keys()))                              # input 2 (str)
 level = st.sidebar.selectbox("Class / Level", list(LEVEL_FACTORS.keys()), index=1)                 # input 3 (str)
 mode = st.sidebar.radio("Class Type", list(MODE_FACTORS.keys()))                                   # input 4 (str)
@@ -297,17 +441,31 @@ with tab_quote:
         chart_df = pd.DataFrame.from_dict(chart_data, orient="index", columns=["Amount (₹)"])
         st.bar_chart(chart_df, use_container_width=True)
 
-    # ----- Download a plain-text copy of the quote -----
-    quote_lines = [f"BrightPath Online Coaching - Fee Quote",
-                   f"Student: {student_name.strip()}", f"Subject: {subject} ({level})",
-                   f"Class type: {mode}", f"Duration: {months} month(s), {classes_per_week} classes/week",
-                   "-" * 40]
-    quote_lines += [f"{r['Item']}: Rs {r['Amount (₹)']}" for r in rows]
-    quote_text = "\n".join(quote_lines)
-    st.download_button("⬇️ Download this quote as a text file", data=quote_text,
-                       file_name=f"{student_name.strip().replace(' ', '_')}_quote.txt")
+    # ----- Download a professionally formatted PDF quote -----
+    safe_student_name = "_".join(student_name.strip().split()).replace("/", "-")
+    pdf_bytes = build_quote_pdf(
+        student_name, subject, level, mode, classes_per_week, months,
+        selected_addons, study_material, payment_plan, result, rows
+    )
+    st.download_button(
+        "📄 Download quote as PDF",
+        data=pdf_bytes,
+        file_name=f"BrightPath_Quote_{safe_student_name}.pdf",
+        mime="application/pdf",
+        type="primary",
+        use_container_width=True
+    )
 
-    st.caption("Fees are indicative and include 18% GST. Book a free demo class before you enrol.")
+    # Also provide a spreadsheet-friendly CSV copy of the itemised breakdown.
+    csv_data = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📊 Download fee breakdown as CSV",
+        data=csv_data,
+        file_name=f"BrightPath_Quote_{safe_student_name}.csv",
+        mime="text/csv"
+    )
+
+    st.caption("Fees are indicative and include 18% GST. Calculations assume 4 teaching weeks per month. Book a free demo class before you enrol.")
 
 # =======================================================================
 # TAB 2: transparent pricing reference (builds customer trust)
@@ -332,6 +490,8 @@ with tab_pricing:
         st.dataframe(pd.DataFrame({"Enrol for": ["12+ months", "6-11 months", "3-5 months", "Under 3 months"],
                                    "Discount": ["15%", "10%", "5%", "0%"]}),
                     hide_index=True, use_container_width=True)
+
+    st.caption("Note: the monthly instalment option includes a 3% convenience fee; paying in full gives a 2% discount. GST is applied after discounts and payment-plan adjustments.")
 
     st.write("**Promo codes currently active:** " + ", ".join(
         f"`{code}` ({pct}% off)" for code, pct in PROMO_CODES.items()))
